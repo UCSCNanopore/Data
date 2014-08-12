@@ -77,7 +77,7 @@ def EpigeneticsModel( distributions, name, low=0, high=90 ):
 		board.add_transition( board.s6, match_s, 1.00 )
 		board.add_transition( board.e7, match.start, 0.90 )
 		board.add_transition( board.e7, match_e, 0.05 )
-		board.add_transition( board.e7, board.s6, 0.05 )
+		board.add_transition( board.e7, board.s7, 0.05 )
 
 		board.add_transition( delete, board.e1, 0.1 )
 		board.add_transition( delete, insert, 0.1 )
@@ -462,6 +462,7 @@ def get_events( filenames, hmm, force_parse=False ):
 	events = [] 
 	for filename in filenames:
 		json_name = filename[:-4]+".json"
+
 		try:
 			if force_parse:
 				raise Error()
@@ -489,7 +490,7 @@ def analyze_events( events, hmm ):
 	"""
 
 	data = {}
-	data['Score'] = []
+	data['Filter Score'] = []
 	data['C'] = []
 	data['mC'] = []
 	data['hmC'] = []
@@ -533,58 +534,18 @@ def analyze_events( events, hmm ):
 		# into each of the three labels. This gives us a score representing
 		# how likely it is that this event went through the fork and through
 		# the label.
-		d['Score'] = sum( d[tag] for tag in tags[:3] ) * sum( d[tag] for tag in tags[3:] )
+		d['Filter Score'] = sum( d[tag] for tag in tags[:3] ) * sum( d[tag] for tag in tags[3:] )
  
 		# Calculate the dot product score between the posterior transition
 		# probability of transitions for cytosine variants, and the
 		# corresponding labels
 		score = d['C']*d['T'] + d['mC']*d['CAT'] + d['hmC']*d['X']
-		d['Soft Call'] = score / d['Score'] if d['Score'] != 0 else 0
+		d['Soft Call'] = score / d['Filter Score'] if d['Filter Score'] != 0 else 0
 
 		for key, value in d.items():
 			data[key].append( value )
 	
 	return pd.DataFrame( data )
-
-def event_viewer( filenames, training_data, hmm ):
-	events = []
-	for filename in training_files:
-		file = File.from_json( filename[:-4]+".json" )
-		events.extend( file.events )
-
-	while True:
-		try:
-			i = input("View: ")
-		except:
-			break
-		event = events[i]
-
-		plt.subplot(211)
-		event.plot( color='cycle' )
-		plt.subplot(212)
-		logp, hidden_states = event.apply_hmm( hmm, algorithm='viterbi' )
-		map_logp, map_hs = event.apply_hmm( hmm, algorithm='maximum_a_posteriori' )
-
-		hidden_states = [ state for _, state in hidden_states if not state.is_silent() ] 
-		map_hs = [ state for _, state in map_hs if not state.is_silent() ]
-		segs = [ seg.mean for seg in event.segments ]
-
-		print "Null Score: ", training_data['Null Score'][i]
-		print "Score: ", training_data['Score'][i], "\tSoft Call", training_data['Soft Call'][i]
-		print
-		print "  C: {:4.4}\t  T: {:4.4}".format( training_data['C'][i], training_data['T'][i] )
-		print " mC: {:4.4}\tCAT: {:4.4}".format( training_data['mC'][i], training_data['CAT'][i] )
-		print "hmC: {:4.4}\t  X: {:4.4}".format( training_data['hmC'][i], training_data['X'][i] )
-		print
-		print "\n".join( "{:<10.10} {:10.10} {:10.10}".format( round(obs, 2), vstate.name, mstate.name ) for obs, vstate, mstate in it.izip_longest( segs, hidden_states, map_hs ) )
-		event.plot( hmm=hmm, color='hmm', cmap={'M-C:28':'b', 'M-C:29': 'b', 'M-C:30': 'b', 'M-C:31': 'b',
-												'M-T:37':'b', 'M-T:38': 'b', 'M-T:39': 'b', 'M-T:40': 'b', 'M-T:41': 'b',
-												'M-mC:28':'r', 'M-mC:29': 'r', 'M-mC:30': 'r', 'M-mC:31': 'r',
-												'M-X:37':'c', 'M-X:38': 'c', 'M-X:39': 'c', 'M-X:40': 'c', 'M-X:41': 'c',
-												'M-hmC:28':'c', 'M-hmC:29': 'c', 'M-hmC:30': 'c', 'M-hmC:31': 'c', 
-												'M-CAT:37': 'r', 'M-CAT:38': 'r', 'M-CAT:39': 'r', 'M-CAT:40': 'r', 'M-CAT:41': 'r', 
-												'else': 'k'} )
-		plt.show()
 
 def insert_delete_plot( model, events ):
 	"""
@@ -657,7 +618,7 @@ def train( model, events, threshold=0.10 ):
 	print "Scoring Events Took {}s".format( time.time() - tic )
 
 	# Get the events using the best threshold
-	events = [ event for score, event in it.izip( data['Score'], events ) if score > threshold ]
+	events = [ event for score, event in it.izip( data['Filter Score'], events ) if score > threshold ]
 	print "{} events after filtering".format( len(events) )
 
 	# Train the HMM using those events
@@ -674,11 +635,11 @@ def test( model, events ):
 	'''
 
 	# Analyze the data, and sort it by filter score
-	data = analyze_events( events, model ).sort( 'Score' )
+	data = analyze_events( events, model ).sort( 'Filter Score' )
 	n = len(data)
 
 	# Attach the list of accuracies using the top i events to the frame
-	data['Filtered Accuracy'] = [ 1. * sum( data['Soft Call'][i:] ) / (n-i) for i in xrange( n ) ]
+	data['MCSC'] = [ 1. * sum( data['Soft Call'][i:] ) / (n-i) for i in xrange( n ) ]
 
 	# Return the frame
 	return data
@@ -710,7 +671,7 @@ def n_fold_cross_validation( events, n=5 ):
 		else:
 			data = pd.concat( [ data, test(model, testing) ] )
 
-	data = data.sort( 'Score' )
+	data = data.sort( 'Filter Score' )
 	n = len(data)
 
 	return [ 1. * sum( data['Soft Call'][i:] ) / (n-i) for i in xrange( n ) ][::-1]
@@ -762,8 +723,6 @@ def threshold_scan( train, test ):
 		n = len(data)
 
 		# Attach the list of accuracies using the top i events to the frame
-		for i in xrange( n ):
-			print sum( data['Soft Call'][i:] ), 1. * sum( data['Soft Call'][i:] ) / (n-i)
 		accuracies.append( [ 1. * sum( data['Soft Call'][i:] ) / (n-i) for i in xrange( n ) ][::-1] )
 
 	# Turn this list into a numpy array for downstream use
@@ -785,7 +744,7 @@ if __name__ == '__main__':
 
 	print "Beginning"
 	#print "Building Profile HMM..."
-	
+
 	with open( "untrained_hmm.txt") as infile:
 		model = Model.read( infile )
 
@@ -796,21 +755,13 @@ if __name__ == '__main__':
 	train_fold, test_fold = train_test_split( events, train_perc=0.7 )
 	print "{} Training Events and {} Testing Events".format( len(train_fold), len(test_fold) )
 
-	trainf, crossf = train_test_split( train_fold, train_perc=0.7 )
-	thresholds = threshold_scan( trainf, crossf )
-	np.savetxt( 'threshold_scan.txt', thresholds )
-	sys.exit()
-
 	model = train( model, train_fold, threshold=0.1 )
 	data = test( model, test_fold )
 
 	data.to_csv( 'Test Set.csv' )
 
-	sys.exit()
 
 	import random
-	
-
 	# Cross Validation
 	accuracies = []
 	for i in xrange( 10 ):
