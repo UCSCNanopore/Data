@@ -2,6 +2,25 @@ This contains all information pertaining to the manuscripts "Segmentation of Noi
 
 13 data files, recording 12.5 minutes each, had events detected and segmented automatically. These results are stored in the appropriately named JSON files. PyPore can be used to open these files, using the File.from_json( filename ) class method.
 
+Here is some example code for going through the files and plotting each of the events, assuming the jsons are in the same directory as your script:
+
+```
+from PyPore.DataTypes import *
+from matplotlib import pyplot as plt
+import glob
+
+for json in glob.glob( '*.json' ):
+	file = File.from_json( json )
+	for event in file.events:
+		event.plot( color='cycle' )
+		plt.show()
+```
+
+This will produce plots of the events one at a time, colored in a four-color cycle. If you find that color cycle ugly, you can pass `color_cycle = [...]` into `event.plot`, where color_cycle is a list of matplotlib-acceptable colors.	
+
+The plots are of MetaEvents, which is just metadata about the event and its corresponding segments. The raw ionic current data is available upon request, but not suitable for online hosting. The plots show the mean of each segment, and fading colors based on one, two, and three standard deviations from the mean. 
+
+
 Tutorials on how to use PyPore, and how to replicate the analysis of the second paper, are done respectively in PyPore Tutorial.ipynb and Cytosine Classification.ipynb. These are ipython notebooks, which can be run interactively using ipython, or viewed online at  http://nbviewer.ipython.org/github/UCSCNanopore/Data/blob/master/Automation/PyPore%20Tutorial.ipynb or http://nbviewer.ipython.org/github/UCSCNanopore/Data/blob/master/Automation/Cytosine%20Classification.ipynb
 respectively. 
 
